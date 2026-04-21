@@ -2,6 +2,10 @@ import socket
 import sys
 import threading
 
+# --- 新增：核心数据结构 (Tuple Space) 和 互斥锁 ---
+tuple_space = {}  # 我们的共享大字典
+space_lock = threading.Lock()  # 保护字典的锁，防止并发冲突
+
 
 # --- 新增：专门接待单个客户端的“接线员”函数 ---
 def handle_client(client_socket, addr):
@@ -14,10 +18,47 @@ def handle_client(client_socket, addr):
 
             request_msg = data.decode('utf-8')
 
-            # 为了防止一会儿多个客户端同时连进来屏幕太乱，我们暂时不把收到的具体内容打印出来了
-            # 假装处理了一下，随便回一句符合协议格式的话
-            dummy_response = "019 OK (dummy) read"
-            client_socket.sendall(dummy_response.encode('utf-8'))
+            # --- 新增：解析暗号并执行真实的 PUT/READ/GET 操作 ---
+            # 客户端发来的格式例如: "023 P apple is a red fruit"
+            # 我们最多把它切成4份: ["023", "P", "apple", "is a red fruit"]
+            parts = request_msg.split(' ', 3)
+            if len(parts) < 3:
+                continue  # 格式不对就忽略
+
+            cmd = parts[1]
+            key = parts[2]
+            val = parts[3] if len(parts) > 3 else ""
+
+            response_str = ""
+
+            # 【重点来了】：进入金库前先上锁！
+            with space_lock:
+                if cmd == 'P':  # PUT 操作
+                    if key in tuple_space:
+                        response_str = f"ERR {key} already exists"
+                    else:
+                        tuple_space[key] = val
+                        response_str = f"OK ({key}, {val}) added"
+
+                elif cmd == 'R':  # READ 操作
+                    if key in tuple_space:
+                        response_str = f"OK ({key}, {tuple_space[key]}) read"
+                    else:
+                        response_str = f"ERR {key} does not exist"
+
+                elif cmd == 'G':  # GET 操作 (读完还要删掉)
+                    if key in tuple_space:
+                        fetched_val = tuple_space.pop(key)  # pop能同时完成“拿出”和“删除”
+                        response_str = f"OK ({key}, {fetched_val}) removed"
+                    else:
+                        response_str = f"ERR {key} does not exist"
+            # (代码运行到这里退出了 with 缩进，锁会自动解开)
+
+            # 把服务器的回复按照 "NNN 回复内容" 的格式打包发回去
+            total_length = len(response_str) + 4
+            final_msg = f"{total_length:03d} {response_str}"
+            client_socket.sendall(final_msg.encode('utf-8'))
+            # ------------------------------------------------
 
         except ConnectionResetError:
             break  # 客户端非正常强退时保护服务器不崩溃
