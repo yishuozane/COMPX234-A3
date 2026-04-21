@@ -1,15 +1,57 @@
 import socket
 import sys
 import threading
+import time
 
 # --- 新增：核心数据结构 (Tuple Space) 和 互斥锁 ---
 tuple_space = {}  # 我们的共享大字典
 space_lock = threading.Lock()  # 保护字典的锁，防止并发冲突
 
+# --- 新增：统计用的全局计数器 ---
+stats_clients = 0
+stats_ops = 0
+stats_reads = 0
+stats_gets = 0
+stats_puts = 0
+stats_errors = 0
+
+
+# --- 新增：后台定时汇报线程 ---
+def report_status():
+    while True:
+        time.sleep(10)  # 睡 10 秒钟
+        # 醒来后，先锁住数据，防止统计的时候别人在改数据
+        with space_lock:
+            num_tuples = len(tuple_space)
+            # 计算总长度
+            total_key_len = sum(len(k) for k in tuple_space.keys())
+            total_val_len = sum(len(v) for v in tuple_space.values())
+
+            # 计算平均长度 (防止除以 0 报错)
+            avg_k = total_key_len / num_tuples if num_tuples > 0 else 0
+            avg_v = total_val_len / num_tuples if num_tuples > 0 else 0
+            avg_tuple = avg_k + avg_v
+
+            print("\n" + "=" * 40)
+            print("SERVER STATUS SUMMARY (Every 10s)")
+            print(f"Tuples in space : {num_tuples}")
+            print(f"Avg tuple size  : {avg_tuple:.2f} chars (Key: {avg_k:.2f}, Val: {avg_v:.2f})")
+            print(f"Total clients   : {stats_clients}")
+            print(f"Total operations: {stats_ops} (Reads: {stats_reads}, Gets: {stats_gets}, Puts: {stats_puts})")
+            print(f"Total errors    : {stats_errors}")
+            print("=" * 40 + "\n")
+
 
 # --- 新增：专门接待单个客户端的“接线员”函数 ---
 def handle_client(client_socket, addr):
+    global stats_clients, stats_ops, stats_reads, stats_gets, stats_puts, stats_errors
+
     print(f"Accepted connection from {addr}")
+
+    # 新客户端连入，计数器 +1
+    with space_lock:
+        stats_clients += 1
+
     while True:
         try:
             data = client_socket.recv(1024)
@@ -74,6 +116,11 @@ def main():
         sys.exit(1)
 
     port = int(sys.argv[1])
+
+    # --- 新增：启动后台汇报线程 ---
+    # daemon=True 表示当主服务器关机时，这个定时汇报的线程也会乖乖跟着关机，不会赖在后台
+    reporter_thread = threading.Thread(target=report_status, daemon=True)
+    reporter_thread.start()
 
     # 创建一个 TCP Socket (买个手机)
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
