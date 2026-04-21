@@ -42,10 +42,30 @@ def main():
                         print(f"Error: Key and value too long, ignoring: {line}")
                         continue
 
-                    # 先打印出来看看我们解析得对不对
-                    print(f"Parsed -> Command: {command}, Key: {key}, Value: {value}")
+                    # 1. 把命令缩写成一个字母 (P, R, 或 G)
+                    cmd_char = command[0]
 
-                    # (下一阶段骤我们将在这里把指令打包成 NNN 格式发给服务器)
+                    # 2. 拼装后面的内容
+                    if cmd_char == 'P':
+                        payload = f"{cmd_char} {key} {value}"
+                    else:
+                        payload = f"{cmd_char} {key}"
+
+                    # 3. 计算总长度。"NNN " 占 4 个字符，所以总长度是 payload 长度 + 4
+                    total_length = len(payload) + 4
+
+                    # 4. 组装最终暗号，03d 表示用0填补到3位数
+                    message = f"{total_length:03d} {payload}"
+
+                    # 5. 发送给服务器 (需要转换成 bytes)
+                    client_socket.sendall(message.encode('utf-8'))
+                    print(f"Client Sent: {message}")
+
+                    # 6. 必须等待服务器的回复才能继续下一条！(同步行为)
+                    response = client_socket.recv(1024).decode('utf-8')
+                    if not response:
+                        break  # 服务器断开了
+                    print(f"Client Received: {response}")
 
         except FileNotFoundError:
             print(f"Error: File {filename} not found.")
